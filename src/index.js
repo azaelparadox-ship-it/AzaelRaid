@@ -22,13 +22,16 @@ const commands = [
 commands.forEach(cmd => client.commands.set(cmd.data.name, cmd));
 
 // Événements Discord
-client.once("ready", () => {
+client.once("clientReady", () => {
   console.log(`✅ AzaelRaid connecté en tant que ${client.user.tag}`);
   voteScheduler.start(client);
 });
 
-client.on("interactionCreate", interaction =>
-  interactionCreate.execute(interaction, client).catch(console.error)
-);
+client.on("interactionCreate", interaction => {
+  console.log(`[interaction] type=${interaction.type} cmd=${interaction.commandName || interaction.customId || "?"}`);
+  interactionCreate.execute(interaction, client).catch(err => console.error("[interaction error]", err));
+});
+
+client.on("error", err => console.error("[Discord error]", err));
 
 client.login(process.env.DISCORD_TOKEN);
