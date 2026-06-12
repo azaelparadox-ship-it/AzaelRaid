@@ -22,8 +22,10 @@ module.exports = {
       return interaction.reply({ content: "⚠️ Aucun joueur inscrit pour l'instant.", ephemeral: true });
     }
 
-    const groups = buildGroups(raid.registrations);
-    const embed = buildGroupsEmbed(groups, raid.raidDate);
+    const actifs = raid.registrations.filter(r => r.role !== "Bench");
+    const bench  = raid.registrations.filter(r => r.role === "Bench");
+    const groups = buildGroups(actifs);
+    const embed = buildGroupsEmbed(groups, raid.raidDate, bench);
     await interaction.reply({ embeds: [embed] });
   }
 };

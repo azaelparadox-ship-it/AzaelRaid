@@ -76,8 +76,9 @@ async function handleVoteRole(interaction) {
     return interaction.reply({ content: "⚠️ Aucun vote en cours.", ephemeral: true });
   }
 
-  const role = interaction.customId.split("_")[2]; // Tank | Heal | DPS
-  const classes = getClassesForRole(role);
+  const role = interaction.customId.split("_")[2]; // Tank | Heal | DPS | Bench
+  // Le bench peut jouer n'importe quelle classe
+  const classes = role === "Bench" ? require("../utils/wowData").ALL_CLASSES : getClassesForRole(role);
 
   const selectRow = new ActionRowBuilder().addComponents(
     new StringSelectMenuBuilder()

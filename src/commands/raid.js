@@ -160,6 +160,7 @@ module.exports = {
 };
 
 function buildVoteComponents() {
+  // Ligne 1 : Tank / Heal / DPS / Bench
   const roleRow = new ActionRowBuilder();
   WOW_ROLES.forEach(r => {
     roleRow.addComponents(
@@ -171,11 +172,20 @@ function buildVoteComponents() {
   });
   roleRow.addComponents(
     new ButtonBuilder()
+      .setCustomId("vote_role_Bench")
+      .setLabel("🪑 Bench")
+      .setStyle(ButtonStyle.Secondary)
+  );
+
+  // Ligne 2 : clôture manuelle (admin)
+  const adminRow = new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
       .setCustomId("vote_close_manual")
       .setLabel("🔒 Clôturer le vote")
       .setStyle(ButtonStyle.Danger)
   );
-  return [roleRow];
+
+  return [roleRow, adminRow];
 }
 
 module.exports.buildVoteComponents = buildVoteComponents;
