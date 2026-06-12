@@ -16,7 +16,7 @@ function buildVoteEmbed(raid) {
     : "*Aucun pour l'instant*";
 
   return new EmbedBuilder()
-    .setTitle("⚔️ Raid Viewer — Disponibilité")
+    .setTitle(`⚔️ Raid Viewer ${raid.difficulte ? '— ' + raid.difficulte : ''} — Disponibilité`)
     .setColor(0x9b59b6)
     .setDescription(
       `📅 **Date du raid :** ${discordTimestamp(raidDate)} (${discordTimestamp(raidDate, "R")})\n` +
@@ -43,7 +43,7 @@ function buildRegistrationEmbed(raid) {
     : "*Aucun*";
 
   return new EmbedBuilder()
-    .setTitle(`⚔️ Raid Viewer — ${discordTimestamp(raid.raidDate)}`)
+    .setTitle(`⚔️ Raid Viewer ${raid.difficulte ? '— ' + raid.difficulte + ' ' : ''}— ${discordTimestamp(raid.raidDate)}`)
     .setColor(0xe67e22)
     .setDescription(
       `${raid.registrations.length} joueur(s) inscrit(s)\n` +

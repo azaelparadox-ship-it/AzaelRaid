@@ -20,9 +20,10 @@ module.exports = {
     }
 
     // ── Modal setup /raid ────────────────────────────────────────────
-    if (interaction.isModalSubmit() && interaction.customId === "raid_setup_modal") {
+    if (interaction.isModalSubmit() && interaction.customId.startsWith("raid_setup_modal")) {
       const { handleModal } = require("../commands/raid");
-      await handleModal(interaction).catch(console.error);
+      const diff = interaction.customId.split('_').pop();
+      await handleModal(interaction, diff).catch(console.error);
       return;
     }
 
