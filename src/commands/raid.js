@@ -1,23 +1,19 @@
 const {
   SlashCommandBuilder, ModalBuilder, TextInputBuilder,
-  TextInputStyle, ActionRowBuilder, ButtonBuilder, ButtonStyle
+  TextInputStyle, ActionRowBuilder, ButtonBuilder, ButtonStyle,
+  StringSelectMenuBuilder
 } = require("discord.js");
 const { isAdmin } = require("../utils/helpers");
 const { createRaid, getRaid, updateRaid } = require("../utils/store");
 const { buildVoteEmbed } = require("../utils/embeds");
 const { WOW_ROLES } = require("../utils/wowData");
 
-// Parse une date + heure séparés, en heure de Paris → Date UTC correct
 function parseParisTZ(datePart, timePart) {
-  // Nettoie et accepte JJ/MM/AAAA ou JJ-MM-AAAA
-  const cleanDate = datePart.trim().replace(/-/g, "/");
+  const cleanDate = (datePart || "").trim().replace(/-/g, "/");
   const cleanTime = (timePart || "20:00").trim().replace("h", ":");
-
   const [day, month, year] = cleanDate.split("/").map(Number);
   const [hour, minute]     = cleanTime.split(":").map(Number);
-
-  if ([day, month, year, hour, minute].some(isNaN)) return null;
-
+  if ([day, month, year, hour, minute].some(v => isNaN(v))) return null;
   const utcGuess    = Date.UTC(year, month - 1, day, hour, minute);
   const parisOffset = getParisOffset(new Date(utcGuess));
   return new Date(utcGuess - parisOffset * 60 * 1000);
@@ -46,61 +42,43 @@ module.exports = {
 
   async execute(interaction) {
     if (!isAdmin(interaction.member)) {
-      return interaction.reply({ content: "❌ Tu n'as pas la permission d'utiliser cette commande.", ephemeral: true });
+      return interaction.reply({ content: "❌ Tu n'as pas la permission.", ephemeral: true });
     }
-
     const existing = getRaid(interaction.guildId);
     if (existing && existing.phase !== "done") {
-      return interaction.reply({ content: "⚠️ Un raid est déjà en cours ! Utilise `/raid-cancel` pour l'annuler d'abord.", ephemeral: true });
+      return interaction.reply({ content: "⚠️ Un raid est déjà en cours ! Utilise `/raid-cancel` d'abord.", ephemeral: true });
     }
 
     const difficulte = interaction.options.getString("difficulte");
 
     const modal = new ModalBuilder()
       .setCustomId(`raid_setup_modal_${difficulte}`)
-      .setTitle(`Raid Viewer ${difficulte} — Dates`);
+      .setTitle(`Raid ${difficulte} — Proposer des dates`);
 
     modal.addComponents(
-      // ── Date du raid ──────────────────────────────────────────────
       new ActionRowBuilder().addComponents(
         new TextInputBuilder()
-          .setCustomId("raid_date")
-          .setLabel("Date du raid (JJ/MM/AAAA)")
-          .setStyle(TextInputStyle.Short)
-          .setPlaceholder("ex : 21/06/2026")
-          .setMinLength(8)
-          .setMaxLength(10)
+          .setCustomId("dates")
+          .setLabel("Dates proposées (1 par ligne, JJ/MM/AAAA HH:MM)")
+          .setStyle(TextInputStyle.Paragraph)
+          .setPlaceholder("21/06/2026 20:45\n22/06/2026 20:45\n28/06/2026 20:45")
+          .setMinLength(5)
           .setRequired(true)
       ),
-      new ActionRowBuilder().addComponents(
-        new TextInputBuilder()
-          .setCustomId("raid_time")
-          .setLabel("Heure du raid (HH:MM) — heure Paris")
-          .setStyle(TextInputStyle.Short)
-          .setPlaceholder("ex : 20:45")
-          .setMinLength(4)
-          .setMaxLength(5)
-          .setRequired(true)
-      ),
-      // ── Fin du vote ───────────────────────────────────────────────
       new ActionRowBuilder().addComponents(
         new TextInputBuilder()
           .setCustomId("vote_end_date")
           .setLabel("Fin du vote — Date (JJ/MM/AAAA)")
           .setStyle(TextInputStyle.Short)
-          .setPlaceholder("ex : 20/06/2026")
-          .setMinLength(8)
-          .setMaxLength(10)
+          .setPlaceholder("20/06/2026")
           .setRequired(true)
       ),
       new ActionRowBuilder().addComponents(
         new TextInputBuilder()
           .setCustomId("vote_end_time")
-          .setLabel("Fin du vote — Heure (HH:MM) — heure Paris")
+          .setLabel("Fin du vote — Heure (HH:MM) heure Paris")
           .setStyle(TextInputStyle.Short)
-          .setPlaceholder("ex : 20:00")
-          .setMinLength(4)
-          .setMaxLength(5)
+          .setPlaceholder("20:00")
           .setRequired(true)
       )
     );
@@ -109,32 +87,42 @@ module.exports = {
   },
 
   async handleModal(interaction, difficulte) {
-    const raidDate   = parseParisTZ(
-      interaction.fields.getTextInputValue("raid_date"),
-      interaction.fields.getTextInputValue("raid_time")
-    );
+    const datesRaw   = interaction.fields.getTextInputValue("dates");
     const voteEndsAt = parseParisTZ(
       interaction.fields.getTextInputValue("vote_end_date"),
       interaction.fields.getTextInputValue("vote_end_time")
     );
 
-    if (!raidDate) {
-      return interaction.reply({ content: "❌ Date ou heure du raid invalide.\nFormat date : **JJ/MM/AAAA** — Format heure : **HH:MM**", ephemeral: true });
-    }
     if (!voteEndsAt || voteEndsAt <= new Date()) {
-      return interaction.reply({ content: "❌ Date ou heure de fin de vote invalide ou déjà passée.\nFormat date : **JJ/MM/AAAA** — Format heure : **HH:MM**", ephemeral: true });
+      return interaction.reply({ content: "❌ Date de fin de vote invalide ou déjà passée.", ephemeral: true });
     }
-    if (voteEndsAt >= raidDate) {
-      return interaction.reply({ content: "❌ La fin du vote doit être **avant** la date du raid.", ephemeral: true });
+
+    // Parse les dates proposées
+    const slots = [];
+    for (const line of datesRaw.split("\n").map(l => l.trim()).filter(Boolean).slice(0, 5)) {
+      const parts = line.split(" ");
+      const date  = parseParisTZ(parts[0], parts[1]);
+      if (!date) {
+        return interaction.reply({ content: `❌ Date invalide : **${line}**\nFormat attendu : JJ/MM/AAAA HH:MM`, ephemeral: true });
+      }
+      if (date <= voteEndsAt) {
+        return interaction.reply({ content: `❌ La date **${line}** doit être après la fin du vote.`, ephemeral: true });
+      }
+      slots.push({ label: line, date });
+    }
+
+    if (slots.length < 1) {
+      return interaction.reply({ content: "❌ Ajoute au moins une date.", ephemeral: true });
     }
 
     createRaid(interaction.guildId, {
       voteChannelId: process.env.VOTE_CHANNEL_ID,
       voteMessageId: null,
       voteEndsAt,
-      raidDate,
+      raidDate: null,       // sera déterminé à la clôture
+      slots,
       difficulte,
-      votes: {},
+      votes: {},            // userId → { dates: [0,2], role, wowClass, username }
       registrations: [],
       eventId: null,
       raidRoleId: null,
@@ -151,7 +139,7 @@ module.exports = {
     const msg = await voteChannel.send({
       content: `<@&${process.env.COMMUNITY_ROLE_ID}> 📣 Un nouveau vote de raid est disponible !`,
       embeds: [buildVoteEmbed(raid)],
-      components: buildVoteComponents()
+      components: buildVoteComponents(slots)
     });
 
     updateRaid(interaction.guildId, { voteMessageId: msg.id });
@@ -159,8 +147,25 @@ module.exports = {
   }
 };
 
-function buildVoteComponents() {
-  // Ligne 1 : Tank / Heal / DPS / Bench
+// Composants du sondage — 1 bouton par date + rôle/bench + clôture
+function buildVoteComponents(slots) {
+  const rows = [];
+
+  // Ligne(s) de dates — max 5 boutons par row
+  const dateRow = new ActionRowBuilder();
+  const emojis  = ["1️⃣","2️⃣","3️⃣","4️⃣","5️⃣"];
+  slots.forEach((slot, i) => {
+    dateRow.addComponents(
+      new ButtonBuilder()
+        .setCustomId(`vote_date_${i}`)
+        .setLabel(slot.label)
+        .setEmoji(emojis[i])
+        .setStyle(ButtonStyle.Secondary)
+    );
+  });
+  rows.push(dateRow);
+
+  // Ligne rôles + bench
   const roleRow = new ActionRowBuilder();
   WOW_ROLES.forEach(r => {
     roleRow.addComponents(
@@ -176,16 +181,19 @@ function buildVoteComponents() {
       .setLabel("🪑 Bench")
       .setStyle(ButtonStyle.Secondary)
   );
+  rows.push(roleRow);
 
-  // Ligne 2 : clôture manuelle (admin)
-  const adminRow = new ActionRowBuilder().addComponents(
-    new ButtonBuilder()
-      .setCustomId("vote_close_manual")
-      .setLabel("🔒 Clôturer le vote")
-      .setStyle(ButtonStyle.Danger)
+  // Ligne clôture admin
+  rows.push(
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId("vote_close_manual")
+        .setLabel("🔒 Clôturer le vote")
+        .setStyle(ButtonStyle.Danger)
+    )
   );
 
-  return [roleRow, adminRow];
+  return rows;
 }
 
 module.exports.buildVoteComponents = buildVoteComponents;
