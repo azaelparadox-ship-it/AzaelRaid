@@ -1,34 +1,33 @@
 const {
   SlashCommandBuilder, ModalBuilder, TextInputBuilder,
-  TextInputStyle, ActionRowBuilder, StringSelectMenuBuilder,
-  ButtonBuilder, ButtonStyle
+  TextInputStyle, ActionRowBuilder, ButtonBuilder, ButtonStyle
 } = require("discord.js");
 const { isAdmin } = require("../utils/helpers");
 const { createRaid, getRaid, updateRaid } = require("../utils/store");
 const { buildVoteEmbed } = require("../utils/embeds");
 const { WOW_ROLES } = require("../utils/wowData");
 
-// Parse une date saisie en heure de Paris (Europe/Paris) → objet Date UTC correct
-function parseParisTZ(str) {
-  const [datePart, timePart] = str.trim().split(" ");
-  const [day, month, year] = datePart.split("/").map(Number);
-  const [hour, minute] = (timePart || "20:00").split(":").map(Number);
+// Parse une date + heure séparés, en heure de Paris → Date UTC correct
+function parseParisTZ(datePart, timePart) {
+  // Nettoie et accepte JJ/MM/AAAA ou JJ-MM-AAAA
+  const cleanDate = datePart.trim().replace(/-/g, "/");
+  const cleanTime = (timePart || "20:00").trim().replace("h", ":");
 
-  // Utilise Intl pour déterminer l'offset Paris à cette date précise (gère DST)
-  const utcGuess = Date.UTC(year, month - 1, day, hour, minute);
+  const [day, month, year] = cleanDate.split("/").map(Number);
+  const [hour, minute]     = cleanTime.split(":").map(Number);
+
+  if ([day, month, year, hour, minute].some(isNaN)) return null;
+
+  const utcGuess    = Date.UTC(year, month - 1, day, hour, minute);
   const parisOffset = getParisOffset(new Date(utcGuess));
   return new Date(utcGuess - parisOffset * 60 * 1000);
 }
 
-// Retourne l'offset Paris en minutes pour une date donnée
 function getParisOffset(date) {
   const utcStr   = date.toLocaleString("en-US", { timeZone: "UTC" });
   const parisStr = date.toLocaleString("en-US", { timeZone: "Europe/Paris" });
-  const diff = (new Date(parisStr) - new Date(utcStr)) / 60000;
-  return diff;
+  return (new Date(parisStr) - new Date(utcStr)) / 60000;
 }
-
-const DIFFICULTIES = ["NM", "HM", "MM"];
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -39,9 +38,9 @@ module.exports = {
         .setDescription("Difficulté du raid")
         .setRequired(true)
         .addChoices(
-          { name: "Normal (NM)",       value: "NM" },
-          { name: "Héroïque (HM)",     value: "HM" },
-          { name: "Mythique (MM)",     value: "MM" }
+          { name: "Normal (NM)",   value: "NM" },
+          { name: "Héroïque (HM)", value: "HM" },
+          { name: "Mythique (MM)", value: "MM" }
         )
     ),
 
@@ -59,23 +58,49 @@ module.exports = {
 
     const modal = new ModalBuilder()
       .setCustomId(`raid_setup_modal_${difficulte}`)
-      .setTitle(`Configurer le Raid Viewer (${difficulte})`);
+      .setTitle(`Raid Viewer ${difficulte} — Dates`);
 
     modal.addComponents(
+      // ── Date du raid ──────────────────────────────────────────────
       new ActionRowBuilder().addComponents(
         new TextInputBuilder()
           .setCustomId("raid_date")
-          .setLabel("Date du raid (JJ/MM/AAAA HH:MM)")
+          .setLabel("Date du raid (JJ/MM/AAAA)")
           .setStyle(TextInputStyle.Short)
-          .setPlaceholder("21/06/2026 20:45")
+          .setPlaceholder("ex : 21/06/2026")
+          .setMinLength(8)
+          .setMaxLength(10)
           .setRequired(true)
       ),
       new ActionRowBuilder().addComponents(
         new TextInputBuilder()
-          .setCustomId("vote_end")
-          .setLabel("Fin du vote (JJ/MM/AAAA HH:MM)")
+          .setCustomId("raid_time")
+          .setLabel("Heure du raid (HH:MM) — heure Paris")
           .setStyle(TextInputStyle.Short)
-          .setPlaceholder("20/06/2026 20:00")
+          .setPlaceholder("ex : 20:45")
+          .setMinLength(4)
+          .setMaxLength(5)
+          .setRequired(true)
+      ),
+      // ── Fin du vote ───────────────────────────────────────────────
+      new ActionRowBuilder().addComponents(
+        new TextInputBuilder()
+          .setCustomId("vote_end_date")
+          .setLabel("Fin du vote — Date (JJ/MM/AAAA)")
+          .setStyle(TextInputStyle.Short)
+          .setPlaceholder("ex : 20/06/2026")
+          .setMinLength(8)
+          .setMaxLength(10)
+          .setRequired(true)
+      ),
+      new ActionRowBuilder().addComponents(
+        new TextInputBuilder()
+          .setCustomId("vote_end_time")
+          .setLabel("Fin du vote — Heure (HH:MM) — heure Paris")
+          .setStyle(TextInputStyle.Short)
+          .setPlaceholder("ex : 20:00")
+          .setMinLength(4)
+          .setMaxLength(5)
           .setRequired(true)
       )
     );
@@ -84,20 +109,23 @@ module.exports = {
   },
 
   async handleModal(interaction, difficulte) {
-    const raidDateRaw = interaction.fields.getTextInputValue("raid_date").trim();
-    const voteEndRaw  = interaction.fields.getTextInputValue("vote_end").trim();
+    const raidDate   = parseParisTZ(
+      interaction.fields.getTextInputValue("raid_date"),
+      interaction.fields.getTextInputValue("raid_time")
+    );
+    const voteEndsAt = parseParisTZ(
+      interaction.fields.getTextInputValue("vote_end_date"),
+      interaction.fields.getTextInputValue("vote_end_time")
+    );
 
-    const raidDate   = parseParisTZ(raidDateRaw);
-    const voteEndsAt = parseParisTZ(voteEndRaw);
-
-    if (isNaN(raidDate.getTime())) {
-      return interaction.reply({ content: "❌ Date du raid invalide. Format : JJ/MM/AAAA HH:MM", ephemeral: true });
+    if (!raidDate) {
+      return interaction.reply({ content: "❌ Date ou heure du raid invalide.\nFormat date : **JJ/MM/AAAA** — Format heure : **HH:MM**", ephemeral: true });
     }
-    if (isNaN(voteEndsAt.getTime()) || voteEndsAt <= new Date()) {
-      return interaction.reply({ content: "❌ Date de fin de vote invalide ou déjà passée.", ephemeral: true });
+    if (!voteEndsAt || voteEndsAt <= new Date()) {
+      return interaction.reply({ content: "❌ Date ou heure de fin de vote invalide ou déjà passée.\nFormat date : **JJ/MM/AAAA** — Format heure : **HH:MM**", ephemeral: true });
     }
     if (voteEndsAt >= raidDate) {
-      return interaction.reply({ content: "❌ La fin du vote doit être avant la date du raid.", ephemeral: true });
+      return interaction.reply({ content: "❌ La fin du vote doit être **avant** la date du raid.", ephemeral: true });
     }
 
     createRaid(interaction.guildId, {
@@ -119,14 +147,11 @@ module.exports = {
 
     const voteChannel = await interaction.client.channels.fetch(process.env.VOTE_CHANNEL_ID);
     const raid = getRaid(interaction.guildId);
-    const embed = buildVoteEmbed(raid);
-    const components = buildVoteComponents();
 
-    // Ping le rôle communauté
     const msg = await voteChannel.send({
       content: `<@&${process.env.COMMUNITY_ROLE_ID}> 📣 Un nouveau vote de raid est disponible !`,
-      embeds: [embed],
-      components
+      embeds: [buildVoteEmbed(raid)],
+      components: buildVoteComponents()
     });
 
     updateRaid(interaction.guildId, { voteMessageId: msg.id });
