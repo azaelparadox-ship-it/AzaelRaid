@@ -4,28 +4,35 @@ const { discordTimestamp } = require("./helpers");
 
 // Embed du sondage de vote
 function buildVoteEmbed(raid) {
-  const embed = new EmbedBuilder()
-    .setTitle("⚔️ Raid Viewer — Vote pour le créneau")
+  const { voteEndsAt, raidDate, votes } = raid;
+
+  // Compter les votes par rôle
+  const tanks = Object.values(votes).filter(v => v.role === "Tank");
+  const heals = Object.values(votes).filter(v => v.role === "Heal");
+  const dps   = Object.values(votes).filter(v => v.role === "DPS");
+
+  const fmtVoters = (list) => list.length
+    ? list.map(v => `${CLASS_EMOJI[v.wowClass] || "❓"} ${v.wowClass}`).join("\n")
+    : "*Aucun pour l'instant*";
+
+  return new EmbedBuilder()
+    .setTitle("⚔️ Raid Viewer — Disponibilité")
     .setColor(0x9b59b6)
     .setDescription(
-      `Vote pour le créneau qui t'arrange le mieux !\n` +
-      `Sélectionne aussi ta **classe** et ton **rôle** ci-dessous.\n\n` +
-      `🗳️ Le vote se clôture ${discordTimestamp(raid.voteEndsAt)} (${discordTimestamp(raid.voteEndsAt, "R")})`
+      `📅 **Date du raid :** ${discordTimestamp(raidDate)} (${discordTimestamp(raidDate, "R")})\n` +
+      `🗳️ **Fin du vote :** ${discordTimestamp(voteEndsAt)} (${discordTimestamp(voteEndsAt, "R")})\n\n` +
+      `Clique sur ton rôle pour voter, puis choisis ta classe.\n` +
+      `Tu peux modifier ton vote à tout moment.`
     )
-    .setFooter({ text: "AzaelRaid • Tu peux changer ton vote à tout moment" });
-
-  raid.slots.forEach((slot, i) => {
-    const voters = Object.entries(raid.votes)
-      .filter(([, v]) => v.slotIndex === i)
-      .map(([, v]) => `${CLASS_EMOJI[v.wowClass] || "❓"} ${v.wowClass} (${v.role})`)
-      .join("\n") || "*Aucun vote pour l'instant*";
-    embed.addFields({ name: `${["1️⃣","2️⃣","3️⃣","4️⃣","5️⃣"][i] || `Créneau ${i+1}`} ${slot.label}`, value: voters });
-  });
-
-  return embed;
+    .addFields(
+      { name: `🛡️ Tanks (${tanks.length})`, value: fmtVoters(tanks), inline: true },
+      { name: `💚 Heals (${heals.length})`, value: fmtVoters(heals), inline: true },
+      { name: `⚔️ DPS (${dps.length})`,     value: fmtVoters(dps),   inline: true }
+    )
+    .setFooter({ text: "AzaelRaid • Les admins peuvent clôturer le vote manuellement" });
 }
 
-// Embed des inscriptions (affiché dans le canal raid)
+// Embed des inscriptions
 function buildRegistrationEmbed(raid) {
   const tanks = raid.registrations.filter(r => r.role === "Tank");
   const heals = raid.registrations.filter(r => r.role === "Heal");
@@ -38,7 +45,10 @@ function buildRegistrationEmbed(raid) {
   return new EmbedBuilder()
     .setTitle(`⚔️ Raid Viewer — ${discordTimestamp(raid.raidDate)}`)
     .setColor(0xe67e22)
-    .setDescription(`${raid.registrations.length} joueur(s) inscrit(s)\nUtilise les boutons ci-dessous pour t'inscrire, modifier ou te désinscrire.`)
+    .setDescription(
+      `${raid.registrations.length} joueur(s) inscrit(s)\n` +
+      `Utilise les boutons ci-dessous pour modifier ou annuler ton inscription.`
+    )
     .addFields(
       { name: `🛡️ Tanks (${tanks.length})`, value: fmt(tanks), inline: false },
       { name: `💚 Heals (${heals.length})`, value: fmt(heals), inline: false },

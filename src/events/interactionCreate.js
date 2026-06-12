@@ -4,7 +4,8 @@ const {
 } = require("discord.js");
 const { getRaid, updateRaid } = require("../utils/store");
 const { buildVoteEmbed, buildRegistrationEmbed } = require("../utils/embeds");
-const { WOW_CLASSES, WOW_ROLES } = require("../utils/wowData");
+const { getClassesForRole, ALL_CLASSES } = require("../utils/wowData");
+const { isAdmin, discordTimestamp } = require("../utils/helpers");
 const { buildVoteComponents } = require("../commands/raid");
 
 module.exports = {
@@ -18,34 +19,44 @@ module.exports = {
       return;
     }
 
-    // ── Modal de setup /raid ─────────────────────────────────────────
+    // ── Modal setup /raid ────────────────────────────────────────────
     if (interaction.isModalSubmit() && interaction.customId === "raid_setup_modal") {
       const { handleModal } = require("../commands/raid");
       await handleModal(interaction).catch(console.error);
       return;
     }
 
-    // ── Modal switch de perso ─────────────────────────────────────────
+    // ── Modal switch de perso ────────────────────────────────────────
     if (interaction.isModalSubmit() && interaction.customId === "switch_perso_modal") {
       await handleSwitchModal(interaction);
       return;
     }
 
-    // ── Boutons et selects du vote ────────────────────────────────────
-    if (interaction.isButton() && interaction.customId.startsWith("vote_slot_")) {
-      await handleVoteSlot(interaction);
+    // ── Bouton clôture manuelle du vote ──────────────────────────────
+    if (interaction.isButton() && interaction.customId === "vote_close_manual") {
+      if (!isAdmin(interaction.member)) {
+        return interaction.reply({ content: "❌ Réservé aux admins/modos.", ephemeral: true });
+      }
+      const { closeVote } = require("./voteScheduler");
+      await interaction.deferReply({ ephemeral: true });
+      await closeVote(getRaid(interaction.guildId), interaction.client);
+      await interaction.editReply({ content: "✅ Vote clôturé et event créé !" });
       return;
     }
-    if (interaction.isStringSelectMenu() && interaction.customId === "vote_class") {
-      await handleVoteClass(interaction);
-      return;
-    }
+
+    // ── Bouton choix du rôle (vote) ──────────────────────────────────
     if (interaction.isButton() && interaction.customId.startsWith("vote_role_")) {
       await handleVoteRole(interaction);
       return;
     }
 
-    // ── Boutons des inscriptions ──────────────────────────────────────
+    // ── Select choix de la classe (vote) ────────────────────────────
+    if (interaction.isStringSelectMenu() && interaction.customId === "vote_class") {
+      await handleVoteClass(interaction);
+      return;
+    }
+
+    // ── Boutons inscriptions ─────────────────────────────────────────
     if (interaction.isButton() && interaction.customId === "reg_switch") {
       await showSwitchModal(interaction);
       return;
@@ -57,93 +68,106 @@ module.exports = {
   }
 };
 
-// ── Vote : choix du créneau ────────────────────────────────────────────
-async function handleVoteSlot(interaction) {
-  const raid = getRaid(interaction.guildId);
-  if (!raid || raid.phase !== "vote") return interaction.reply({ content: "⚠️ Aucun vote en cours.", ephemeral: true });
-
-  const slotIndex = parseInt(interaction.customId.split("_")[2]);
-  const existing = raid.votes[interaction.user.id] || {};
-  updateRaid(interaction.guildId, {
-    votes: { ...raid.votes, [interaction.user.id]: { ...existing, slotIndex } }
-  });
-
-  await refreshVoteMessage(interaction);
-  await interaction.reply({ content: `✅ Créneau **${raid.slots[slotIndex].label}** sélectionné !`, ephemeral: true });
-}
-
-// ── Vote : choix de la classe ──────────────────────────────────────────
-async function handleVoteClass(interaction) {
-  const raid = getRaid(interaction.guildId);
-  if (!raid || raid.phase !== "vote") return interaction.reply({ content: "⚠️ Aucun vote en cours.", ephemeral: true });
-
-  const wowClass = interaction.values[0];
-  const existing = raid.votes[interaction.user.id] || {};
-  updateRaid(interaction.guildId, {
-    votes: { ...raid.votes, [interaction.user.id]: { ...existing, wowClass } }
-  });
-
-  await refreshVoteMessage(interaction);
-  await interaction.reply({ content: `✅ Classe **${wowClass}** enregistrée !`, ephemeral: true });
-}
-
-// ── Vote : choix du rôle ───────────────────────────────────────────────
+// ── Vote : clic sur un rôle → affiche le select de classe adapté ──────
 async function handleVoteRole(interaction) {
   const raid = getRaid(interaction.guildId);
-  if (!raid || raid.phase !== "vote") return interaction.reply({ content: "⚠️ Aucun vote en cours.", ephemeral: true });
+  if (!raid || raid.phase !== "vote") {
+    return interaction.reply({ content: "⚠️ Aucun vote en cours.", ephemeral: true });
+  }
 
-  const role = interaction.customId.split("_")[2];
-  const existing = raid.votes[interaction.user.id] || {};
+  const role = interaction.customId.split("_")[2]; // Tank | Heal | DPS
+  const classes = getClassesForRole(role);
+
+  const selectRow = new ActionRowBuilder().addComponents(
+    new StringSelectMenuBuilder()
+      .setCustomId("vote_class")
+      .setPlaceholder(`Choisis ta classe (${role})`)
+      .addOptions(classes.map(c => ({ label: c, value: `${role}|${c}` })))
+  );
+
+  await interaction.reply({
+    content: `Tu as choisi **${role}** — sélectionne maintenant ta classe :`,
+    components: [selectRow],
+    ephemeral: true
+  });
+}
+
+// ── Vote : sélection de la classe ─────────────────────────────────────
+async function handleVoteClass(interaction) {
+  const raid = getRaid(interaction.guildId);
+  if (!raid || raid.phase !== "vote") {
+    return interaction.reply({ content: "⚠️ Aucun vote en cours.", ephemeral: true });
+  }
+
+  const [role, wowClass] = interaction.values[0].split("|");
+
   updateRaid(interaction.guildId, {
-    votes: { ...raid.votes, [interaction.user.id]: { ...existing, role } }
+    votes: {
+      ...raid.votes,
+      [interaction.user.id]: {
+        role,
+        wowClass,
+        username: interaction.member?.displayName || interaction.user.username
+      }
+    }
   });
 
   await refreshVoteMessage(interaction);
-  await interaction.reply({ content: `✅ Rôle **${role}** enregistré !`, ephemeral: true });
+  await interaction.update({
+    content: `✅ Vote enregistré : **${wowClass}** en **${role}** !`,
+    components: []
+  });
 }
 
-// Met à jour l'embed du vote sans changer les composants
+// Rafraîchit l'embed du sondage
 async function refreshVoteMessage(interaction) {
   const raid = getRaid(interaction.guildId);
-  if (!raid || !raid.voteMessageId) return;
+  if (!raid?.voteMessageId) return;
   try {
     const channel = await interaction.client.channels.fetch(raid.voteChannelId);
     const msg = await channel.messages.fetch(raid.voteMessageId);
-    await msg.edit({ embeds: [buildVoteEmbed(raid)], components: buildVoteComponents(raid.slots) });
-  } catch { /* message supprimé ou canal inaccessible */ }
+    await msg.edit({ embeds: [buildVoteEmbed(raid)], components: buildVoteComponents() });
+  } catch (e) { console.error("refreshVoteMessage:", e.message); }
 }
 
-// ── Switch de perso (modal) ────────────────────────────────────────────
+// ── Switch de perso ───────────────────────────────────────────────────
 async function showSwitchModal(interaction) {
   const raid = getRaid(interaction.guildId);
-  if (!raid || raid.phase !== "registration") return interaction.reply({ content: "⚠️ Les inscriptions ne sont pas ouvertes.", ephemeral: true });
+  if (!raid || raid.phase !== "registration") {
+    return interaction.reply({ content: "⚠️ Les inscriptions ne sont pas ouvertes.", ephemeral: true });
+  }
+
+  const existing = raid.registrations.find(r => r.userId === interaction.user.id);
 
   const modal = new ModalBuilder()
     .setCustomId("switch_perso_modal")
     .setTitle("Modifier mon inscription");
 
-  const classInput = new TextInputBuilder()
-    .setCustomId("new_class")
-    .setLabel("Nouvelle classe (ex: Mage)")
-    .setStyle(TextInputStyle.Short)
-    .setRequired(true);
-
-  const roleInput = new TextInputBuilder()
-    .setCustomId("new_role")
-    .setLabel("Nouveau rôle : Tank, Heal ou DPS")
-    .setStyle(TextInputStyle.Short)
-    .setRequired(true);
-
-  const specInput = new TextInputBuilder()
-    .setCustomId("new_spec")
-    .setLabel("Spé (optionnel, ex: Feu)")
-    .setStyle(TextInputStyle.Short)
-    .setRequired(false);
-
   modal.addComponents(
-    new ActionRowBuilder().addComponents(classInput),
-    new ActionRowBuilder().addComponents(roleInput),
-    new ActionRowBuilder().addComponents(specInput)
+    new ActionRowBuilder().addComponents(
+      new TextInputBuilder()
+        .setCustomId("new_role")
+        .setLabel("Rôle : Tank, Heal ou DPS")
+        .setStyle(TextInputStyle.Short)
+        .setValue(existing?.role || "")
+        .setRequired(true)
+    ),
+    new ActionRowBuilder().addComponents(
+      new TextInputBuilder()
+        .setCustomId("new_class")
+        .setLabel("Classe (ex: Mage, Druide...)")
+        .setStyle(TextInputStyle.Short)
+        .setValue(existing?.wowClass || "")
+        .setRequired(true)
+    ),
+    new ActionRowBuilder().addComponents(
+      new TextInputBuilder()
+        .setCustomId("new_spec")
+        .setLabel("Spé (optionnel, ex: Feu)")
+        .setStyle(TextInputStyle.Short)
+        .setValue(existing?.specNote || "")
+        .setRequired(false)
+    )
   );
 
   await interaction.showModal(modal);
@@ -151,19 +175,25 @@ async function showSwitchModal(interaction) {
 
 async function handleSwitchModal(interaction) {
   const raid = getRaid(interaction.guildId);
-  if (!raid || raid.phase !== "registration") return interaction.reply({ content: "⚠️ Les inscriptions ne sont pas ouvertes.", ephemeral: true });
+  if (!raid || raid.phase !== "registration") {
+    return interaction.reply({ content: "⚠️ Les inscriptions ne sont pas ouvertes.", ephemeral: true });
+  }
 
-  const newClass = interaction.fields.getTextInputValue("new_class").trim();
   const newRoleRaw = interaction.fields.getTextInputValue("new_role").trim();
-  const newSpec = interaction.fields.getTextInputValue("new_spec").trim();
+  const newClass   = interaction.fields.getTextInputValue("new_class").trim();
+  const newSpec    = interaction.fields.getTextInputValue("new_spec").trim();
 
   const validRoles = ["Tank", "Heal", "DPS"];
   const newRole = validRoles.find(r => r.toLowerCase() === newRoleRaw.toLowerCase());
   if (!newRole) return interaction.reply({ content: "❌ Rôle invalide. Utilise Tank, Heal ou DPS.", ephemeral: true });
 
-  const validClasses = WOW_CLASSES.map(c => c.toLowerCase());
-  if (!validClasses.includes(newClass.toLowerCase())) {
-    return interaction.reply({ content: `❌ Classe invalide. Classes disponibles : ${WOW_CLASSES.join(", ")}`, ephemeral: true });
+  // Vérification classe selon rôle
+  const allowed = getClassesForRole(newRole).map(c => c.toLowerCase());
+  if (!allowed.includes(newClass.toLowerCase())) {
+    return interaction.reply({
+      content: `❌ **${newClass}** ne peut pas jouer **${newRole}**.\nClasses disponibles : ${getClassesForRole(newRole).join(", ")}`,
+      ephemeral: true
+    });
   }
 
   const existing = raid.registrations.find(r => r.userId === interaction.user.id);
@@ -181,17 +211,20 @@ async function handleSwitchModal(interaction) {
       role: newRole,
       specNote: newSpec
     });
+    // Assigner le rôle provisoire
+    if (raid.raidRoleId) {
+      try { await interaction.member.roles.add(raid.raidRoleId); } catch {}
+    }
   }
 
   updateRaid(interaction.guildId, { registrations: raid.registrations });
-  await refreshRegistrationMessage(interaction, raid);
+  await refreshRegistrationMessage(interaction, getRaid(interaction.guildId));
 
-  // Log dans le canal admin si c'est un switch
   if (oldInfo) {
     try {
       const logChannel = await interaction.client.channels.fetch(process.env.LOG_CHANNEL_ID);
-      await logChannel.send(`🔄 **${interaction.user.username}** a switché de **${oldInfo}** → **${newClass} ${newRole}**`);
-    } catch { /* pas de canal log */ }
+      await logChannel.send(`🔄 **${interaction.user.username}** a switché : **${oldInfo}** → **${newClass} ${newRole}**`);
+    } catch {}
   }
 
   await interaction.reply({
@@ -200,43 +233,40 @@ async function handleSwitchModal(interaction) {
   });
 }
 
-// ── Désinscription ─────────────────────────────────────────────────────
+// ── Désinscription ────────────────────────────────────────────────────
 async function handleLeave(interaction) {
   const raid = getRaid(interaction.guildId);
-  if (!raid || raid.phase !== "registration") return interaction.reply({ content: "⚠️ Les inscriptions ne sont pas ouvertes.", ephemeral: true });
+  if (!raid || raid.phase !== "registration") {
+    return interaction.reply({ content: "⚠️ Les inscriptions ne sont pas ouvertes.", ephemeral: true });
+  }
 
   const before = raid.registrations.length;
   updateRaid(interaction.guildId, {
     registrations: raid.registrations.filter(r => r.userId !== interaction.user.id)
   });
 
-  const updatedRaid = getRaid(interaction.guildId);
-  if (updatedRaid.registrations.length === before) {
+  if (getRaid(interaction.guildId).registrations.length === before) {
     return interaction.reply({ content: "⚠️ Tu n'es pas inscrit au raid.", ephemeral: true });
   }
 
-  // Retirer le rôle provisoire
   if (raid.raidRoleId) {
-    try {
-      await interaction.member.roles.remove(raid.raidRoleId);
-    } catch { /* */ }
+    try { await interaction.member.roles.remove(raid.raidRoleId); } catch {}
   }
 
-  await refreshRegistrationMessage(interaction, updatedRaid);
+  await refreshRegistrationMessage(interaction, getRaid(interaction.guildId));
   await interaction.reply({ content: "✅ Tu as été désinscrit du raid.", ephemeral: true });
 }
 
-// Met à jour l'embed des inscriptions
+// Rafraîchit l'embed des inscriptions
 async function refreshRegistrationMessage(interaction, raid) {
-  if (!raid.registrationMessageId) return;
+  if (!raid?.registrationMessageId) return;
   try {
     const channel = await interaction.client.channels.fetch(process.env.RAID_CHANNEL_ID);
     const msg = await channel.messages.fetch(raid.registrationMessageId);
     await msg.edit({ embeds: [buildRegistrationEmbed(raid)], components: buildRegistrationComponents() });
-  } catch { /* */ }
+  } catch (e) { console.error("refreshRegistrationMessage:", e.message); }
 }
 
-// Composants du message d'inscriptions
 function buildRegistrationComponents() {
   return [
     new ActionRowBuilder().addComponents(

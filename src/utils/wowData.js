@@ -1,25 +1,26 @@
-// Classes et rôles WoW — utilisés dans les menus déroulants
+// Classes et rôles WoW avec restrictions par rôle
 
-const WOW_CLASSES = [
+const TANKS = ["Chevalier de la mort", "Paladin", "Guerrier", "Druide", "Chasseur de démons", "Moine"];
+const HEALS = ["Évocateur", "Chaman", "Druide", "Prêtre", "Moine", "Paladin"];
+const ALL_CLASSES = [
   "Guerrier", "Paladin", "Chasseur", "Voleur", "Prêtre",
   "Chevalier de la mort", "Chaman", "Mage", "Démoniste",
   "Moine", "Druide", "Chasseur de démons", "Évocateur"
 ];
 
 const WOW_ROLES = [
-  { label: "🛡️ Tank",    value: "Tank" },
-  { label: "💚 Heal",    value: "Heal" },
-  { label: "⚔️ DPS",     value: "DPS"  }
+  { label: "🛡️ Tank", value: "Tank" },
+  { label: "💚 Heal", value: "Heal" },
+  { label: "⚔️ DPS",  value: "DPS"  }
 ];
 
-// Couleur embed par rôle
-const ROLE_COLORS = {
-  Tank: 0x3498db,  // bleu
-  Heal: 0x2ecc71,  // vert
-  DPS:  0xe74c3c,  // rouge
-};
+// Retourne les classes disponibles pour un rôle donné
+function getClassesForRole(role) {
+  if (role === "Tank") return TANKS;
+  if (role === "Heal") return HEALS;
+  return ALL_CLASSES;
+}
 
-// Émoji par classe
 const CLASS_EMOJI = {
   "Guerrier":              "⚔️",
   "Paladin":               "🔨",
@@ -36,4 +37,4 @@ const CLASS_EMOJI = {
   "Évocateur":             "🐉",
 };
 
-module.exports = { WOW_CLASSES, WOW_ROLES, ROLE_COLORS, CLASS_EMOJI };
+module.exports = { TANKS, HEALS, ALL_CLASSES, WOW_ROLES, CLASS_EMOJI, getClassesForRole };
