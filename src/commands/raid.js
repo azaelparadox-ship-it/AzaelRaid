@@ -30,14 +30,14 @@ module.exports = {
 
     const slots = new TextInputBuilder()
       .setCustomId("slots")
-      .setLabel("Créneaux à proposer (1 par ligne, ex: Samedi 21/06 20h45)")
+      .setLabel("Créneaux (1 par ligne, ex: Sam 21/06 20h45)")
       .setStyle(TextInputStyle.Paragraph)
       .setPlaceholder("Samedi 21/06 20h45\nDimanche 22/06 20h45")
       .setRequired(true);
 
     const voteEnd = new TextInputBuilder()
       .setCustomId("vote_end")
-      .setLabel("Fin du vote (JJ/MM/AAAA HH:MM, heure Paris)")
+      .setLabel("Fin du vote (JJ/MM/AAAA HH:MM)")
       .setStyle(TextInputStyle.Short)
       .setPlaceholder("20/06/2025 20:00")
       .setRequired(true);
