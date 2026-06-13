@@ -59,7 +59,7 @@ module.exports = {
       new ActionRowBuilder().addComponents(
         new TextInputBuilder()
           .setCustomId("dates")
-          .setLabel("Dates proposées (1 par ligne, JJ/MM/AAAA HH:MM)")
+          .setLabel("Dates (1 par ligne, JJ/MM/AAAA HH:MM)")
           .setStyle(TextInputStyle.Paragraph)
           .setPlaceholder("21/06/2026 20:45\n22/06/2026 20:45\n28/06/2026 20:45")
           .setMinLength(5)
