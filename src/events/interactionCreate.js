@@ -68,6 +68,10 @@ module.exports = {
     }
 
     // Boutons inscriptions
+    if (interaction.isButton() && interaction.customId === "reg_join") {
+      await showJoinModal(interaction);
+      return;
+    }
     if (interaction.isButton() && interaction.customId === "reg_switch") {
       await showSwitchModal(interaction);
       return;
@@ -172,6 +176,51 @@ async function refreshVoteMessage(interaction) {
     const msg     = await channel.messages.fetch(raid.voteMessageId);
     await msg.edit({ embeds: [buildVoteEmbed(raid)], components: buildVoteComponents(raid.slots) });
   } catch (e) { console.error("refreshVoteMessage:", e.message); }
+}
+
+// ── Nouvelle inscription (joueur n'ayant pas voté) ───────────────────
+async function showJoinModal(interaction) {
+  const raid = getRaid(interaction.guildId);
+  if (!raid || raid.phase !== "registration") {
+    return interaction.reply({ content: "⚠️ Les inscriptions ne sont pas ouvertes.", ephemeral: true });
+  }
+
+  const already = raid.registrations.find(r => r.userId === interaction.user.id);
+  if (already) {
+    return interaction.reply({ content: "✅ Tu es déjà inscrit ! Utilise **✏️ Modifier mon perso** pour changer ton inscription.", ephemeral: true });
+  }
+
+  const modal = new ModalBuilder()
+    .setCustomId("switch_perso_modal")
+    .setTitle("S'inscrire au raid");
+
+  modal.addComponents(
+    new ActionRowBuilder().addComponents(
+      new TextInputBuilder()
+        .setCustomId("new_role")
+        .setLabel("Rôle : Tank, Heal, DPS ou Bench")
+        .setStyle(TextInputStyle.Short)
+        .setPlaceholder("DPS")
+        .setRequired(true)
+    ),
+    new ActionRowBuilder().addComponents(
+      new TextInputBuilder()
+        .setCustomId("new_class")
+        .setLabel("Classe (ex: Mage, Druide...)")
+        .setStyle(TextInputStyle.Short)
+        .setPlaceholder("Mage")
+        .setRequired(true)
+    ),
+    new ActionRowBuilder().addComponents(
+      new TextInputBuilder()
+        .setCustomId("new_spec")
+        .setLabel("Spé (optionnel, ex: Feu)")
+        .setStyle(TextInputStyle.Short)
+        .setRequired(false)
+    )
+  );
+
+  await interaction.showModal(modal);
 }
 
 // ── Switch de perso ───────────────────────────────────────────────────
@@ -311,6 +360,7 @@ async function refreshRegistrationMessage(interaction, raid) {
 function buildRegistrationComponents() {
   return [
     new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId("reg_join").setLabel("✋ S'inscrire").setStyle(ButtonStyle.Success),
       new ButtonBuilder().setCustomId("reg_switch").setLabel("✏️ Modifier mon perso").setStyle(ButtonStyle.Primary),
       new ButtonBuilder().setCustomId("reg_leave").setLabel("❌ Se désinscrire").setStyle(ButtonStyle.Danger)
     )
