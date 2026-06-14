@@ -291,6 +291,23 @@ async function handleSwitchModal(interaction) {
   const existing = raid.registrations.find(r => r.userId === interaction.user.id);
   const oldInfo  = existing ? `${existing.wowClass} ${existing.role}` : null;
 
+  // Vérifier les limites si le joueur change de rôle ou s'inscrit pour la première fois
+  const isRoleChange = existing && existing.role !== newRole;
+  const isNewPlayer  = !existing;
+  if ((isNewPlayer || isRoleChange) && newRole !== "Bench") {
+    const LIMITS = { Tank: 2, Heal: 5 };
+    if (LIMITS[newRole] !== undefined) {
+      const count = raid.registrations.filter(r => r.role === newRole && r.userId !== interaction.user.id).length;
+      if (count >= LIMITS[newRole]) {
+        return interaction.reply({
+          content: `❌ La limite de **${LIMITS[newRole]} ${newRole}(s)** est atteinte pour ce raid.
+Essaie un autre rôle ou inscris-toi en 🪑 Bench !`,
+          ephemeral: true
+        });
+      }
+    }
+  }
+
   if (existing) {
     existing.wowClass  = newClass;
     existing.role      = newRole;
