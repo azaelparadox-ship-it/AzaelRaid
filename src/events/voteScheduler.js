@@ -2,31 +2,30 @@ const cron = require("node-cron");
 const { getAllRaids, updateRaid } = require("../utils/store");
 const { buildRegistrationEmbed } = require("../utils/embeds");
 const { buildRegistrationComponents } = require("./interactionCreate");
-const { raidRoleName, discordTimestamp } = require("../utils/helpers");
+const { raidRoleName, discordTimestamp, toDate } = require("../utils/helpers");
 
 let client;
 
 function start(discordClient) {
   client = discordClient;
-  // Toutes les minutes : vérif vote à clôturer + rappel
   cron.schedule("* * * * *", () => tick());
-  // Tous les jours à 1h00 heure Paris : suppression des rôles expirés
+  // 1h00 heure Paris — suppression silencieuse des rôles expirés
   cron.schedule("0 1 * * *", () => cleanExpiredRoles(), { timezone: "Europe/Paris" });
 }
 
 async function tick() {
-  const now = new Date();
-  for (const raid of getAllRaids()) {
+  const now = Date.now();
 
-    // Clôturer le vote automatiquement
-    if (raid.phase === "vote" && now >= new Date(raid.voteEndsAt)) {
+  for (const raid of getAllRaids()) {
+    // Clôturer le vote
+    if (raid.phase === "vote" && now >= toDate(raid.voteEndsAt).getTime()) {
       await closeVote(raid, client);
     }
 
-    // Rappel H-30 avant le raid
+    // Rappel H-30 : on compare les timestamps bruts (ms), pas d'objet Date intermédiaire
     if (raid.phase === "registration" && !raid.reminderSent && raid.raidDate) {
-      const raidTime = new Date(raid.raidDate).getTime();
-      const diff = raidTime - now.getTime();
+      const raidTs = toDate(raid.raidDate).getTime();
+      const diff   = raidTs - now;
       if (diff <= 30 * 60 * 1000 && diff > 0) {
         await sendReminder(raid);
       }
@@ -41,7 +40,7 @@ async function closeVote(raid, discordClient) {
   try {
     const guild = await cl.guilds.fetch(raid.guildId);
 
-    // Déterminer la date gagnante
+    // Date gagnante
     const tally = {};
     raid.slots.forEach((_, i) => tally[i] = 0);
     Object.values(raid.votes).forEach(v => {
@@ -52,12 +51,12 @@ async function closeVote(raid, discordClient) {
       Object.entries(tally).sort((a, b) => b[1] - a[1] || a[0] - b[0])[0][0]
     );
     const winnerSlot = raid.slots[winnerIndex];
-    const raidDate   = new Date(winnerSlot.date);
+    const raidDate   = toDate(winnerSlot.date);
 
-    // Créer le rôle provisoire
+    // Rôle provisoire — "colors" au lieu de "color" (fix deprecation)
     const raidRole = await guild.roles.create({
       name: raidRoleName(raidDate),
-      color: 0xe67e22,
+      colors: [0xe67e22],
       reason: "Rôle provisoire raid viewer AzaelRaid"
     });
 
@@ -79,7 +78,7 @@ async function closeVote(raid, discordClient) {
       } catch {}
     }
 
-    // Créer l'event Discord
+    // Event Discord
     let eventId = null;
     try {
       const event = await guild.scheduledEvents.create({
@@ -104,13 +103,12 @@ async function closeVote(raid, discordClient) {
 
     const updatedRaid = getAllRaids().find(r => r.guildId === raid.guildId);
 
-    // Message d'inscriptions
+    // Message d'inscriptions dans le canal raid
     const raidChannel = await cl.channels.fetch(process.env.RAID_CHANNEL_ID);
-    const votesForWinner = tally[winnerIndex];
     const regMsg = await raidChannel.send({
       content:
         `🎉 **Vote clôturé !**\n` +
-        `📅 Date retenue : **${winnerSlot.label}** avec **${votesForWinner} vote(s)**\n` +
+        `📅 Date retenue : **${winnerSlot.label}** avec **${tally[winnerIndex]} vote(s)**\n` +
         `${discordTimestamp(raidDate)} (${discordTimestamp(raidDate, "R")})\n\n` +
         `<@&${raidRole.id}> tu es inscrit automatiquement. Tu peux modifier ton perso ci-dessous.`,
       embeds: [buildRegistrationEmbed(updatedRaid)],
@@ -119,7 +117,7 @@ async function closeVote(raid, discordClient) {
 
     updateRaid(raid.guildId, { registrationMessageId: regMsg.id });
 
-    // Marquer le sondage comme clôturé
+    // Clôturer le message de vote
     try {
       const voteChannel = await cl.channels.fetch(raid.voteChannelId);
       const voteMsg     = await voteChannel.messages.fetch(raid.voteMessageId);
@@ -133,6 +131,8 @@ async function closeVote(raid, discordClient) {
       });
     } catch {}
 
+    console.log(`[AzaelRaid] Vote clôturé — date retenue : ${winnerSlot.label}`);
+
   } catch (err) {
     console.error("Erreur closeVote:", err);
   }
@@ -140,11 +140,11 @@ async function closeVote(raid, discordClient) {
 
 async function sendReminder(raid) {
   try {
-    console.log(`[AzaelRaid] Envoi du rappel pour le raid de ${raid.raidDate}`);
+    console.log(`[AzaelRaid] Envoi rappel — raid à ${toDate(raid.raidDate).toISOString()}`);
     const raidChannel = await client.channels.fetch(process.env.RAID_CHANNEL_ID);
     await raidChannel.send(
       `⏰ <@&${raid.raidRoleId}> — Le raid commence dans **30 minutes** ! ` +
-      `Rendez-vous à ${discordTimestamp(new Date(raid.raidDate), "t")} pour le groupage ⚔️`
+      `Rendez-vous à ${discordTimestamp(raid.raidDate, "t")} pour le groupage ⚔️`
     );
     updateRaid(raid.guildId, { reminderSent: true });
     console.log(`[AzaelRaid] Rappel envoyé avec succès`);
@@ -153,18 +153,12 @@ async function sendReminder(raid) {
   }
 }
 
-// Suppression silencieuse des rôles à 1h00 heure Paris
 async function cleanExpiredRoles() {
-  const now = new Date();
-  console.log(`[AzaelRaid] Nettoyage des rôles expirés — ${now.toISOString()}`);
-
+  const now = Date.now();
+  console.log(`[AzaelRaid] Nettoyage des rôles expirés`);
   for (const raid of getAllRaids()) {
     if (raid.phase !== "registration" || !raid.raidDate || !raid.raidRoleId) continue;
-
-    const raidDate = new Date(raid.raidDate);
-    // Supprimer si le raid a commencé (la date est passée)
-    if (raidDate > now) continue;
-
+    if (toDate(raid.raidDate).getTime() > now) continue;
     try {
       const guild = await client.guilds.fetch(raid.guildId);
       const role  = await guild.roles.fetch(raid.raidRoleId);
@@ -173,9 +167,7 @@ async function cleanExpiredRoles() {
         console.log(`[AzaelRaid] Rôle ${role.name} supprimé`);
       }
       updateRaid(raid.guildId, { phase: "done", raidRoleId: null });
-    } catch (e) {
-      console.error("Erreur suppression rôle:", e.message);
-    }
+    } catch (e) { console.error("Erreur suppression rôle:", e.message); }
   }
 }
 
