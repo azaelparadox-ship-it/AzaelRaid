@@ -53,10 +53,9 @@ async function closeVote(raid, discordClient) {
     const winnerSlot = raid.slots[winnerIndex];
     const raidDate   = toDate(winnerSlot.date);
 
-    // Rôle provisoire — "colors" au lieu de "color" (fix deprecation)
     const raidRole = await guild.roles.create({
       name: raidRoleName(raidDate),
-      colors: [0xe67e22],
+      color: 0xe67e22,
       reason: "Rôle provisoire raid viewer AzaelRaid"
     });
 
